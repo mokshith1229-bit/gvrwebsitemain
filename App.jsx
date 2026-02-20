@@ -7,6 +7,8 @@ import CartSidebar from './components/CartSidebar';
 import AccountModal from './components/AccountModal';
 import ProductDetailPage from './components/ProductDetailPage';
 import CheckoutPage from './components/CheckoutPage';
+import PaymentPage from './components/PaymentPage';
+import ProfilePage from './components/ProfilePage';
 import { PRODUCTS } from './constants';
 
 const App = () => {
@@ -18,6 +20,7 @@ const App = () => {
     const [searchQuery, setSearchQuery] = useState('');
     const [activeCategory, setActiveCategory] = useState('All');
     const [view, setView] = useState('home');
+    const [profileTab, setProfileTab] = useState('orders');
     const [selectedProductId, setSelectedProductId] = useState(null);
     const [viewPolicy, setViewPolicy] = useState(null); // 'shipping', 'refund', 'terms'
     const [adminProducts, setAdminProducts] = useState([]);
@@ -103,6 +106,9 @@ const App = () => {
         setView(newView);
         setSelectedProductId(null);
         setViewPolicy(null);
+        if (newView === 'profile') {
+            setProfileTab('orders'); // Default back to orders when clicking Nav "My Account"
+        }
         window.scrollTo(0, 0);
     };
 
@@ -134,23 +140,117 @@ const App = () => {
         window.scrollTo(0, 0);
     };
 
-    const handleCheckoutSuccess = () => {
-        alert("Order placed successfully! Thank you for shopping with GVR Cashew.");
-        setCart([]);
-        setView('home');
+    const [pendingOrder, setPendingOrder] = useState(null);
+    const [userOrders, setUserOrders] = useState([]);
+
+    const fetchUserOrders = async (currentUser) => {
+        if (!currentUser) return;
+        try {
+            const response = await fetch('http://localhost:5000/orders');
+            if (response.ok) {
+                const allOrders = await response.json();
+                // Filter orders by customer name or email. 
+                // Since our mock login doesn't have true auth, we'll try to match by name or email if available in order.
+                // Looking at backend/orders.json, it uses customerName.
+                const filtered = allOrders.filter(order =>
+                    order.customerName?.toLowerCase() === currentUser.name?.toLowerCase() ||
+                    order.customerEmail === currentUser.email
+                );
+                setUserOrders(filtered.reverse()); // Show newest first
+            }
+        } catch (error) {
+            console.error("Failed to fetch orders:", error);
+        }
+    };
+
+    useEffect(() => {
+        if (user && view === 'profile') {
+            fetchUserOrders(user);
+        }
+    }, [user, view]);
+
+    const handleCheckoutSuccess = (orderData, isOnlinePayment) => {
+        if (isOnlinePayment) {
+            setPendingOrder(orderData);
+            setView('payment');
+            window.scrollTo(0, 0);
+        } else {
+            // COD Success
+            alert("Order placed successfully! Thank you for shopping with GVR Cashew.");
+            setCart([]);
+            setView('home');
+        }
+    };
+
+    const handlePaymentComplete = async () => {
+        if (!pendingOrder) return;
+
+        // In a real app, verify payment here. For now, just save order.
+        try {
+            const finalOrder = {
+                ...pendingOrder,
+                status: 'Paid',
+                paymentMethod: 'online',
+                customerEmail: user?.email // Add email for tracking
+            };
+
+            const response = await fetch('http://localhost:5000/orders', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(finalOrder),
+            });
+
+            if (response.ok) {
+                alert("Payment Successful! Order placed.");
+                setCart([]);
+                setPendingOrder(null);
+                setView('home');
+            } else {
+                alert("Failed to save order. Please contact support.");
+            }
+        } catch (error) {
+            console.error("Error saving online order:", error);
+            alert("Network error. Please make sure the backend is running.");
+        }
     };
 
     const handleLogin = (userData) => {
         setUser({ ...userData, addresses: [] });
+        setIsAccountOpen(false); // Close Modal on success
     };
 
     const handleLogout = () => {
         setUser(null);
+        setView('home');
+    };
+
+    const handleAccountClick = () => {
+        if (user) {
+            setView('profile');
+            setProfileTab('orders');
+            window.scrollTo(0, 0);
+        } else {
+            setIsAccountOpen(true);
+        }
+    };
+
+    const handleOpenAddresses = () => {
+        setView('profile');
+        setProfileTab('addresses');
+        window.scrollTo(0, 0);
     };
 
     const handleSaveAddress = (address) => {
         if (user) {
             setUser({ ...user, addresses: [...user.addresses, address] });
+        }
+    };
+
+    const handleUpdateProfile = (updatedData) => {
+        if (user) {
+            setUser({ ...user, ...updatedData });
         }
     };
 
@@ -160,7 +260,7 @@ const App = () => {
                 cartCount={cartCount}
                 onCartClick={() => setIsCartOpen(true)}
 
-                onAccountClick={() => setIsAccountOpen(true)}
+                onAccountClick={handleAccountClick}
                 onNavigate={handleNavigate}
                 onSearch={setSearchQuery}
                 searchQuery={searchQuery}
@@ -430,8 +530,31 @@ const App = () => {
                 {view === 'checkout' && (
                     <CheckoutPage
                         items={cart}
+                        user={user}
+                        onOpenLogin={() => setIsAccountOpen(true)}
                         onBack={() => setView('shop')}
                         onSuccess={handleCheckoutSuccess}
+                        onSaveAddress={handleSaveAddress}
+                        onOpenAddresses={handleOpenAddresses}
+                    />
+                )}
+
+                {view === 'payment' && pendingOrder && (
+                    <PaymentPage
+                        amount={pendingOrder.totalAmount}
+                        onPaymentComplete={handlePaymentComplete}
+                        onBack={() => setView('checkout')}
+                    />
+                )}
+
+                {view === 'profile' && user && (
+                    <ProfilePage
+                        user={user}
+                        orders={userOrders}
+                        onLogout={handleLogout}
+                        onSaveAddress={handleSaveAddress}
+                        onUpdateProfile={handleUpdateProfile}
+                        initialTab={profileTab}
                     />
                 )}
             </main>
