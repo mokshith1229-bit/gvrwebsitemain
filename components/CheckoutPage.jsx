@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import confetti from 'canvas-confetti';
+// Central API config — change BASE_URL in api.js to switch environments
+import { ORDERS_URL, CREATE_PAYMENT_URL, COUPONS_VALIDATE_URL, SHIPPING_CALCULATE_URL } from '../api';
+import CODConfirmationModal from './CODConfirmationModal';
+
 
 const CheckoutPage = ({ items, onBack, onSuccess, user, onOpenLogin, onOpenAddresses }) => {
     const [formData, setFormData] = useState({
@@ -21,6 +25,13 @@ const CheckoutPage = ({ items, onBack, onSuccess, user, onOpenLogin, onOpenAddre
     const [couponSuccess, setCouponSuccess] = useState('');
     const [isApplying, setIsApplying] = useState(false);
     const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+    const [showCODModal, setShowCODModal] = useState(false);
+
+    // Shipping Logic State
+    const [couriers, setCouriers] = useState([]);
+    const [selectedCourier, setSelectedCourier] = useState(null);
+    const [isCalculatingShipping, setIsCalculatingShipping] = useState(false);
+    const [shippingError, setShippingError] = useState('');
 
     // Auto-fill form if user is logged in
     useEffect(() => {
@@ -60,7 +71,64 @@ const CheckoutPage = ({ items, onBack, onSuccess, user, onOpenLogin, onOpenAddre
     }, []);
 
     const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-    const shipping = 40;
+
+    // Shipping Cost from selected courier, defaults to 0 until selected
+    const shippingCost = selectedCourier ? selectedCourier.shipping_cost : 0;
+
+    // Weight Calculation logic
+    const parseWeight = (weightStr) => {
+        if (!weightStr) return 0.25; // Default 250g if missing
+        const match = weightStr.toLowerCase().match(/(\d+\.?\d*)\s*(g|kg|pcs)/);
+        if (!match) return 0.25;
+        const val = parseFloat(match[1]);
+        const unit = match[2];
+        if (unit === 'g') return val / 1000;
+        return val; // kg or default
+    };
+
+    const totalWeight = items.reduce((sum, item) => sum + (parseWeight(item.weight) * item.quantity), 0);
+
+    const calculateShipping = async () => {
+        if (!formData.pinCode || formData.pinCode.length < 6) return;
+
+        setIsCalculatingShipping(true);
+        setShippingError('');
+        try {
+            const response = await fetch(SHIPPING_CALCULATE_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    pickup_postcode: "530020", // Default store location
+                    delivery_postcode: formData.pinCode,
+                    weight: totalWeight,
+                    cod: formData.paymentMethod === 'cod'
+                })
+            });
+
+            const data = await response.json();
+            if (response.ok) {
+                setCouriers(data.couriers || []);
+                // If previously selected courier is no longer available or cost changed, reset
+                setSelectedCourier(null);
+            } else {
+                setShippingError(data.message || 'Could not calculate shipping');
+                setCouriers([]);
+            }
+        } catch (error) {
+            setShippingError('Network error while calculating shipping');
+            setCouriers([]);
+        } finally {
+            setIsCalculatingShipping(false);
+        }
+    };
+
+    // Trigger calculation when pinCode or paymentMethod changes
+    useEffect(() => {
+        if (formData.pinCode && formData.pinCode.length === 6) {
+            calculateShipping();
+        }
+    }, [formData.pinCode, formData.paymentMethod]);
+
     const tax = Math.round(subtotal * 0.05);
 
     // Calculate Discount
@@ -76,8 +144,9 @@ const CheckoutPage = ({ items, onBack, onSuccess, user, onOpenLogin, onOpenAddre
         }
     }
 
-    const total = Math.max(0, subtotal + shipping + tax - discountAmount);
+    const total = Math.max(0, subtotal + shippingCost + tax - discountAmount);
     const isFormValid = formData.firstName && formData.mobile && formData.flat && formData.area && formData.city && formData.state && formData.pinCode;
+    const isReadyForPayment = isFormValid && selectedCourier && !isCalculatingShipping;
 
     const handleApplyCoupon = async () => {
         if (!couponCode.trim()) return;
@@ -86,7 +155,7 @@ const CheckoutPage = ({ items, onBack, onSuccess, user, onOpenLogin, onOpenAddre
         setCouponSuccess('');
 
         try {
-            const response = await fetch('http://localhost:5000/coupons/validate', {
+            const response = await fetch(COUPONS_VALIDATE_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ code: couponCode, orderValue: subtotal })
@@ -136,68 +205,92 @@ const CheckoutPage = ({ items, onBack, onSuccess, user, onOpenLogin, onOpenAddre
     const handleRazorpayPayment = async (orderData) => {
         setIsProcessingPayment(true);
         try {
-            // 1. Create Order on Backend
-            const res = await fetch('http://localhost:5000/create-payment', {
+            // Step 1: Call backend to create a Razorpay order
+            const res = await fetch(CREATE_PAYMENT_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ totalAmount: total })
             });
-            const rzpOrder = await res.json();
 
-            // 2. Open Razorpay Popup
+            if (!res.ok) {
+                const errData = await res.json();
+                throw new Error(errData.message || 'Failed to create payment order');
+            }
+
+            const rzpOrder = await res.json();
+            // Backend may return orderId or id — support both shapes
+            const razorpayOrderId = rzpOrder.orderId || rzpOrder.id;
+            const keyId = rzpOrder.keyId || rzpOrder.key || "rzp_test_SCODRISGhZ2J6p";
+
+            // Step 2: Open Razorpay checkout popup
             const options = {
-                key: "rzp_test_SCODRISGhZ2J6p", // MUST MATCH BACKEND KEY
+                key: keyId,
                 amount: rzpOrder.amount,
-                currency: rzpOrder.currency,
+                currency: rzpOrder.currency || 'INR',
                 name: "GVR Cashews",
                 description: "Premium Quality Nuts & Spices",
-                order_id: rzpOrder.id,
+                order_id: razorpayOrderId,
+
+                // Step 3: This function runs automatically after successful payment
                 handler: async function (response) {
-                    // 3. On Payment Success
+                    // Razorpay gives us these 3 fields on success
+                    const { razorpay_payment_id, razorpay_order_id, razorpay_signature } = response;
+
+                    // Build the final order payload with all required fields
                     const finalOrder = {
                         ...orderData,
                         paymentMethod: 'ONLINE',
-                        status: 'PAID',
-                        paymentId: response.razorpay_payment_id,
-                        razorpayOrderId: response.razorpay_order_id,
-                        razorpaySignature: response.razorpay_signature
+                        status: 'captured',
+                        courier_company_id: selectedCourier?.courier_company_id,
+                        shipping_charge: shippingCost,
+                        razorpay_payment_id,
+                        razorpay_order_id,
+                        razorpay_signature
                     };
 
-                    const saveRes = await fetch('http://localhost:5000/orders', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(finalOrder)
-                    });
+                    try {
+                        const saveRes = await fetch(ORDERS_URL, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(finalOrder)
+                        });
 
-                    if (saveRes.ok) {
-                        onSuccess(finalOrder, false);
-                    } else {
-                        alert("Payment successful but failed to save order. Please contact support.");
+                        if (saveRes.ok) {
+                            onSuccess(finalOrder, false);
+                        } else {
+                            const saveErr = await saveRes.json();
+                            alert(`Payment successful but order save failed: ${saveErr.message || 'Please contact support.'}`);
+                        }
+                    } catch (saveError) {
+                        console.error('Order save error:', saveError);
+                        alert('Payment successful but could not save order. Please contact support.');
                     }
                 },
+
                 prefill: {
                     name: `${formData.firstName} ${formData.lastName}`.trim(),
-                    email: user?.email,
+                    email: user?.email || '',
                     contact: formData.mobile
                 },
                 theme: { color: "#b45309" },
                 modal: {
                     ondismiss: function () {
+                        // User closed the popup without paying
                         setIsProcessingPayment(false);
                     }
                 }
             };
 
             const rzp = new window.Razorpay(options);
-            rzp.on('payment.failed', function (response) {
-                alert(`Payment Failed: ${response.error.description}`);
+            rzp.on('payment.failed', function (failResponse) {
+                alert(`Payment Failed: ${failResponse.error.description}`);
                 setIsProcessingPayment(false);
             });
             rzp.open();
 
         } catch (error) {
             console.error("Payment Error:", error);
-            alert("Failed to initiate payment. Please try again.");
+            alert(error.message || "Failed to initiate payment. Please try again.");
             setIsProcessingPayment(false);
         }
     };
@@ -213,8 +306,11 @@ const CheckoutPage = ({ items, onBack, onSuccess, user, onOpenLogin, onOpenAddre
             return;
         }
 
-        const fullAddress = `${formData.flat}, ${formData.area}, ${formData.city}, ${formData.state} - ${formData.pinCode}`;
+        const fullAddress = `${formData.flat}, ${formData.area}`.trim();
+
+        // Base order data shared by both COD and Online flows
         const orderData = {
+            userId: user?._id || user?.id,
             customerName: `${formData.firstName} ${formData.lastName}`.trim(),
             customerPhone: formData.mobile,
             customerEmail: user?.email,
@@ -222,34 +318,97 @@ const CheckoutPage = ({ items, onBack, onSuccess, user, onOpenLogin, onOpenAddre
             totalAmount: total,
             couponCode: appliedCoupon ? appliedCoupon.couponCode : null,
             discountAmount: discountAmount,
-            shippingAddress: { address: fullAddress, city: formData.city, postalCode: formData.pinCode },
-            billingAddress: { address: fullAddress, city: formData.city, postalCode: formData.pinCode },
-            status: 'Pending',
-            paymentMethod: formData.paymentMethod,
+            shipping_charge: shippingCost,
+            courier_company_id: selectedCourier?.courier_company_id,
+            shippingAddress: {
+                fullName: `${formData.firstName} ${formData.lastName}`.trim(),
+                phone: formData.mobile,
+                line1: fullAddress,
+                city: formData.city,
+                state: formData.state,
+                pincode: formData.pinCode,
+                country: "India"
+            },
+            billingAddress: {
+                fullName: `${formData.firstName} ${formData.lastName}`.trim(),
+                phone: formData.mobile,
+                line1: fullAddress,
+                city: formData.city,
+                state: formData.state,
+                pincode: formData.pinCode,
+                country: "India"
+            },
             orderDate: new Date().toISOString()
         };
 
+        // Online payment — hand off to Razorpay flow
         if (formData.paymentMethod === 'online') {
             await handleRazorpayPayment(orderData);
             return;
         }
 
-        // COD Flow
+        // Show COD Confirmation Modal
+        setShowCODModal(true);
+    };
+
+    const handleConfirmCOD = async () => {
+        setShowCODModal(false);
+        setIsProcessingPayment(true);
+
+        const fullAddress = `${formData.flat}, ${formData.area}`.trim();
+
+        const codOrder = {
+            userId: user?._id || user?.id,
+            customerName: `${formData.firstName} ${formData.lastName}`.trim(),
+            customerPhone: formData.mobile,
+            customerEmail: user?.email,
+            products: items.map(item => ({ name: item.name, quantity: item.quantity, price: item.price })),
+            totalAmount: total,
+            couponCode: appliedCoupon ? appliedCoupon.couponCode : null,
+            discountAmount: discountAmount,
+            shipping_charge: shippingCost,
+            courier_company_id: selectedCourier?.courier_company_id,
+            shippingAddress: {
+                fullName: `${formData.firstName} ${formData.lastName}`.trim(),
+                phone: formData.mobile,
+                line1: fullAddress,
+                city: formData.city,
+                state: formData.state,
+                pincode: formData.pinCode,
+                country: "India"
+            },
+            billingAddress: {
+                fullName: `${formData.firstName} ${formData.lastName}`.trim(),
+                phone: formData.mobile,
+                line1: fullAddress,
+                city: formData.city,
+                state: formData.state,
+                pincode: formData.pinCode,
+                country: "India"
+            },
+            orderDate: new Date().toISOString(),
+            paymentMethod: 'COD',
+            status: 'Pending'
+        };
+
         try {
-            const response = await fetch('http://localhost:5000/orders', {
+            const response = await fetch(ORDERS_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(orderData)
+                body: JSON.stringify(codOrder)
             });
 
             if (response.ok) {
-                onSuccess(orderData, false);
+                onSuccess(codOrder, false);
             } else {
-                alert("Failed to place order. Please try again.");
+                const errData = await response.json();
+                alert(errData.message || "Failed to place order. Please try again.");
             }
         } catch (error) {
             console.error("Error placing order:", error);
             alert("Network error. Please make sure the backend is running.");
+        } finally {
+            setIsProcessingPayment(false);
         }
     };
 
@@ -341,6 +500,57 @@ const CheckoutPage = ({ items, onBack, onSuccess, user, onOpenLogin, onOpenAddre
                     </div>
 
                     <div className="bg-white p-8 rounded-3xl border border-stone-200">
+                        <h2 className="text-2xl font-serif font-bold text-stone-900 mb-6">Shipping Options</h2>
+
+                        {!formData.pinCode || formData.pinCode.length < 6 ? (
+                            <div className="p-6 bg-stone-50 rounded-2xl border border-dashed border-stone-200 text-center">
+                                <p className="text-stone-500 text-sm italic">Enter a valid PIN Code to see shipping options</p>
+                            </div>
+                        ) : isCalculatingShipping ? (
+                            <div className="p-8 text-center">
+                                <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-amber-600 mb-4"></div>
+                                <p className="text-stone-500 text-sm font-bold animate-pulse">Calculating best shipping rates...</p>
+                            </div>
+                        ) : shippingError ? (
+                            <div className="p-4 bg-red-50 border border-red-100 rounded-xl text-center">
+                                <p className="text-red-600 text-sm font-bold">{shippingError}</p>
+                                <button onClick={calculateShipping} className="mt-2 text-xs text-amber-700 underline font-bold">Try Again</button>
+                            </div>
+                        ) : couriers.length > 0 ? (
+                            <div className="space-y-4">
+                                {couriers.map((courier) => (
+                                    <label
+                                        key={courier.courier_company_id}
+                                        className={`flex items-center p-4 border-2 rounded-2xl cursor-pointer transition-all ${selectedCourier?.courier_company_id === courier.courier_company_id ? 'border-amber-600 bg-amber-50' : 'border-stone-100 hover:border-stone-200'}`}
+                                    >
+                                        <input
+                                            type="radio"
+                                            name="courier"
+                                            className="h-4 w-4 text-amber-700 focus:ring-amber-500"
+                                            checked={selectedCourier?.courier_company_id === courier.courier_company_id}
+                                            onChange={() => setSelectedCourier(courier)}
+                                        />
+                                        <div className="ml-4 flex-1">
+                                            <div className="flex justify-between items-center">
+                                                <span className="font-bold text-stone-900">{courier.courier_name}</span>
+                                                <span className="font-bold text-amber-700">₹{courier.shipping_cost}</span>
+                                            </div>
+                                            <div className="flex justify-between items-center text-xs text-stone-500 mt-1">
+                                                <span>Est. Delivery: {courier.estimated_delivery_days} days</span>
+                                                {courier.etd && <span>ETA: {new Date(courier.etd).toLocaleDateString()}</span>}
+                                            </div>
+                                        </div>
+                                    </label>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="p-6 bg-stone-50 rounded-2xl border border-dashed border-stone-200 text-center">
+                                <p className="text-stone-500 text-sm">No couriers available for this location. Check your PIN Code.</p>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="bg-white p-8 rounded-3xl border border-stone-200">
                         <h2 className="text-2xl font-serif font-bold text-stone-900 mb-6">Payment Method</h2>
                         <div className="space-y-4">
                             <label className={`flex items-center p-4 border-2 rounded-2xl cursor-pointer transition-all ${formData.paymentMethod === 'cod' ? 'border-amber-600 bg-amber-50/50' : 'border-stone-200'}`}>
@@ -368,8 +578,8 @@ const CheckoutPage = ({ items, onBack, onSuccess, user, onOpenLogin, onOpenAddre
                     <div className="bg-stone-900 text-white p-8 rounded-3xl sticky top-24">
                         <h2 className="text-2xl font-serif font-bold mb-6">Order Summary</h2>
                         <div className="space-y-4 mb-8 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                            {items.map(item => (
-                                <div key={item.id} className="flex justify-between items-center text-sm">
+                            {items.map((item, index) => (
+                                <div key={item.id || item._id || index} className="flex justify-between items-center text-sm">
                                     <div className="flex items-center space-x-3">
                                         <span className="w-8 h-8 rounded bg-white/10 flex items-center justify-center font-bold text-amber-500">{item.quantity}x</span>
                                         <span className="text-stone-300">{item.name}</span>
@@ -393,7 +603,7 @@ const CheckoutPage = ({ items, onBack, onSuccess, user, onOpenLogin, onOpenAddre
 
                         <div className="space-y-3">
                             <div className="flex justify-between text-stone-400"><span>Subtotal</span><span>₹{subtotal}</span></div>
-                            <div className="flex justify-between text-stone-400"><span>Shipping</span><span>₹{shipping}</span></div>
+                            <div className="flex justify-between text-stone-400"><span>Shipping</span><span>{shippingCost > 0 ? `₹${shippingCost}` : (isCalculatingShipping ? 'Calculating...' : 'Select Courier')}</span></div>
                             <div className="flex justify-between text-stone-400"><span>Tax (GST 5%)</span><span>₹{tax}</span></div>
                             {discountAmount > 0 && (
                                 <div className="flex justify-between text-green-400 font-bold">
@@ -409,8 +619,8 @@ const CheckoutPage = ({ items, onBack, onSuccess, user, onOpenLogin, onOpenAddre
 
                         <button
                             onClick={handleCompleteOrder}
-                            disabled={!user || !isFormValid || isProcessingPayment}
-                            className={`w-full py-4 rounded-xl font-bold transition-all mt-8 shadow-xl flex items-center justify-center space-x-2 ${!user || !isFormValid || isProcessingPayment
+                            disabled={!user || !isReadyForPayment || isProcessingPayment}
+                            className={`w-full py-4 rounded-xl font-bold transition-all mt-8 shadow-xl flex items-center justify-center space-x-2 ${!user || !isReadyForPayment || isProcessingPayment
                                 ? 'bg-stone-300 text-stone-500 cursor-not-allowed shadow-none'
                                 : 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-900/50'
                                 }`}
@@ -419,15 +629,23 @@ const CheckoutPage = ({ items, onBack, onSuccess, user, onOpenLogin, onOpenAddre
                                 {isProcessingPayment ? 'Processing...' :
                                     (!user ? 'Login to Continue' :
                                         (!isFormValid ? 'Enter Details to Proceed' :
-                                            (formData.paymentMethod === 'online' ? 'Proceed to Pay' : 'Place Order')))}
+                                            (!selectedCourier ? 'Select Shipping' :
+                                                (formData.paymentMethod === 'online' ? 'Proceed to Pay' : 'Place Order'))))}
                             </span>
-                            {!isProcessingPayment && user && isFormValid && formData.paymentMethod === 'online' && (
+                            {!isProcessingPayment && user && isReadyForPayment && formData.paymentMethod === 'online' && (
                                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
                             )}
                         </button>
                     </div>
                 </div>
             </div>
+
+            <CODConfirmationModal
+                isOpen={showCODModal}
+                onClose={() => setShowCODModal(false)}
+                onConfirm={handleConfirmCOD}
+                totalAmount={total}
+            />
         </div>
     );
 };

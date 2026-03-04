@@ -1,8 +1,45 @@
-
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 
 const ProductDetailPage = ({ product, onAddToCart, onBuyNow, onBack }) => {
     const [quantity, setQuantity] = useState(1);
+
+    // thumbnailUrl — primary image (from backend `thumbnail` field, resolved in Redux)
+    // mediaImages  — full gallery array (from backend `media` array, resolved in Redux)
+    const thumbnailUrl = product.thumbnailUrl || null;
+    const mediaImages = Array.isArray(product.mediaImages) && product.mediaImages.length > 0
+        ? product.mediaImages
+        : (thumbnailUrl ? [thumbnailUrl] : []);  // fallback: use thumbnail as the only gallery item
+
+    // Track which gallery image is currently shown in the main viewer
+    const [activeImage, setActiveImage] = useState(0);
+    const displayImage = mediaImages[activeImage] || thumbnailUrl;
+
+    // Consolidate variants: If product has variants, use them. 
+    // Otherwise, automatically generate 250g, 500g, and 1000g variants for the user.
+    const allVariants = useMemo(() => {
+        if (product.variants && product.variants.length > 0) return product.variants;
+
+        const basePrice = product.price || 0;
+        const baseMRP = product.mrp || (basePrice + 200);
+
+        return [
+            { weight: '250g', price: basePrice, mrp: baseMRP, stock: 99 },
+            { weight: '500g', price: Math.round(basePrice * 1.9), mrp: Math.round(baseMRP * 1.9), stock: 99 },
+            { weight: '1000g', price: Math.round(basePrice * 3.7), mrp: Math.round(baseMRP * 3.7), stock: 99 }
+        ];
+    }, [product]);
+
+    // Variant state
+    const [selectedVariant, setSelectedVariant] = useState(allVariants[0]);
+
+    // Sync selectedVariant when allVariants changes (product changes)
+    useEffect(() => {
+        setSelectedVariant(allVariants[0]);
+    }, [allVariants]);
+
+    const currentPrice = selectedVariant?.price || product.price;
+    const currentWeight = selectedVariant?.weight || (product.weight && product.weight !== '250g' ? product.weight : '250g');
+    const currentMRP = selectedVariant?.mrp || product.mrp || (currentPrice + 200);
 
     return (
         <div className="max-w-7xl mx-auto px-4 py-8 animate-in fade-in duration-500">
@@ -19,19 +56,36 @@ const ProductDetailPage = ({ product, onAddToCart, onBuyNow, onBack }) => {
                 {/* Left: Image Gallery */}
                 <div className="space-y-4">
                     <div className="aspect-square rounded-3xl overflow-hidden bg-white border border-stone-200 shadow-sm">
-                        <img
-                            src={product.image}
-                            alt={product.name}
-                            className="w-full h-full object-cover"
-                        />
-                    </div>
-                    <div className="grid grid-cols-4 gap-4">
-                        {[...Array(4)].map((_, i) => (
-                            <div key={i} className="aspect-square rounded-xl overflow-hidden border border-stone-200 bg-white cursor-pointer hover:border-amber-600 transition-colors">
-                                <img src={product.image} alt="" className="w-full h-full object-cover opacity-60" />
+                        {displayImage ? (
+                            <img
+                                src={displayImage}
+                                alt={product.name}
+                                className="w-full h-full object-cover"
+                                onError={(e) => { e.target.style.display = 'none'; }}
+                            />
+                        ) : (
+                            // Placeholder when no image is available
+                            <div className="w-full h-full flex items-center justify-center bg-stone-100">
+                                <span className="text-6xl">🥜</span>
                             </div>
-                        ))}
+                        )}
                     </div>
+
+                    {/* Gallery Thumbnails — real images from backend media array */}
+                    {mediaImages.length > 0 && (
+                        <div className="grid grid-cols-4 gap-4">
+                            {mediaImages.map((url, i) => (
+                                <div
+                                    key={i}
+                                    onClick={() => setActiveImage(i)}
+                                    className={`aspect-square rounded-xl overflow-hidden border-2 cursor-pointer transition-colors ${activeImage === i ? 'border-amber-600' : 'border-stone-200 hover:border-amber-400'
+                                        }`}
+                                >
+                                    <img src={url} alt={`${product.name} view ${i + 1}`} className="w-full h-full object-cover" />
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 {/* Right: Product Info */}
@@ -51,19 +105,33 @@ const ProductDetailPage = ({ product, onAddToCart, onBuyNow, onBack }) => {
 
                     <div className="p-6 bg-white rounded-2xl border border-stone-200 shadow-sm mb-8">
                         <div className="flex items-baseline space-x-2 mb-4">
-                            <span className="text-3xl font-bold text-stone-900">₹{product.price}</span>
-                            <span className="text-stone-400 line-through">₹{product.price + 200}</span>
-                            <span className="text-green-600 font-bold text-sm">Save ₹200</span>
+                            <span className="text-3xl font-bold text-stone-900">₹{currentPrice}</span>
+                            <span className="text-stone-400 line-through">₹{currentMRP}</span>
+                            <span className="text-green-600 font-bold text-sm">Save ₹{currentMRP - currentPrice}</span>
                         </div>
                         <p className="text-stone-600 text-sm leading-relaxed mb-6">
                             {product.description} Available in premium vacuum-sealed packaging to preserve freshness.
                         </p>
 
-                        <div className="space-y-4">
-                            <div className="flex items-center justify-between p-3 bg-stone-50 rounded-xl">
-                                <span className="text-sm font-medium text-stone-600">Weight</span>
-                                <span className="font-bold text-stone-900">{product.weight || '250g'}</span>
+                        <div className="space-y-6">
+                            <div className="space-y-3">
+                                <span className="text-xs font-bold text-stone-400 uppercase tracking-widest">Select Weight</span>
+                                <div className="flex flex-wrap gap-3">
+                                    {allVariants.map((v, i) => (
+                                        <button
+                                            key={i}
+                                            onClick={() => setSelectedVariant(v)}
+                                            className={`px-6 py-2.5 rounded-xl font-bold transition-all border-2 text-sm shadow-sm ${selectedVariant?.weight === v.weight
+                                                ? 'border-amber-600 bg-amber-600 text-white translate-y-[-1px] shadow-amber-900/10'
+                                                : 'border-stone-100 bg-white text-stone-600 hover:border-amber-200'
+                                                }`}
+                                        >
+                                            {v.weight}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
+
                             <div className="flex items-center justify-between p-3 bg-stone-50 rounded-xl">
                                 <span className="text-sm font-medium text-stone-600">Grade</span>
                                 <span className="font-bold text-stone-900">{product.tags && product.tags[0] ? product.tags[0] : 'Premium'}</span>
@@ -80,14 +148,14 @@ const ProductDetailPage = ({ product, onAddToCart, onBuyNow, onBack }) => {
                                 <button onClick={() => setQuantity(q => q + 1)} className="p-2 font-bold text-stone-400 hover:text-amber-800">+</button>
                             </div>
                             <button
-                                onClick={() => onAddToCart(product, quantity)}
+                                onClick={() => onAddToCart({ ...product, price: currentPrice, weight: currentWeight }, quantity)}
                                 className="flex-1 bg-amber-700 hover:bg-amber-800 text-white py-4 rounded-xl font-bold transition-all shadow-lg shadow-amber-900/10"
                             >
                                 Add to Cart
                             </button>
                         </div>
                         <button
-                            onClick={() => onBuyNow(product, quantity)}
+                            onClick={() => onBuyNow({ ...product, price: currentPrice, weight: currentWeight }, quantity)}
                             className="w-full bg-stone-900 hover:bg-black text-white py-4 rounded-xl font-bold transition-all"
                         >
                             Buy Now

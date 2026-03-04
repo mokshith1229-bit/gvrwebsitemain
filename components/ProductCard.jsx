@@ -6,7 +6,10 @@ const ProductCard = ({ product, onAddToCart, onViewDetails }) => {
     const productId = product.id || product._id;
     const category = product.category || 'Specialty';
     const rating = product.rating || 5;
-    const weight = product.weight || '250g'; // Default weight if missing
+    // Format weight: backend sends a number (e.g. 250), display as "250g"
+    const weight = product.weight ? `${product.weight}g` : null;
+    // thumbnailUrl is pre-resolved by Redux productSlice (from backend `thumbnail` field)
+    const imageUrl = product.thumbnailUrl || null;
 
     return (
         <div className="group bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 border border-stone-100 flex flex-col h-full">
@@ -14,11 +17,14 @@ const ProductCard = ({ product, onAddToCart, onViewDetails }) => {
                 className="relative aspect-square overflow-hidden bg-stone-100 cursor-pointer"
                 onClick={() => onViewDetails(productId)}
             >
-                {product.image ? (
+                {imageUrl ? (
                     <img
-                        src={product.image}
+                        src={imageUrl}
                         alt={product.name}
                         className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                        // onError: if the image fails to load (e.g., deleted from server),
+                        // hide the broken img tag and let the parent show the placeholder
+                        onError={(e) => { e.target.style.display = 'none'; }}
                     />
                 ) : (
                     <div className="w-full h-full flex items-center justify-center text-stone-300">
@@ -60,7 +66,7 @@ const ProductCard = ({ product, onAddToCart, onViewDetails }) => {
                             </svg>
                         ))}
                     </div>
-                    <span className="text-xs text-stone-400">({weight})</span>
+                    {weight && <span className="text-xs text-stone-400">({weight})</span>}
                 </div>
 
                 {/* Stock Display Logic */}

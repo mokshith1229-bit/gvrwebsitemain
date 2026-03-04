@@ -36,8 +36,8 @@ const CartSidebar = ({ isOpen, onClose, items, onRemove, onUpdateQuantity, onPro
                         </div>
                     ) : (
                         items.map((item) => (
-                            <div key={item.id} className="flex space-x-4">
-                                <img src={item.image} alt={item.name} className="w-20 h-20 object-cover rounded-lg bg-stone-50" />
+                            <div key={`${item.id}-${item.weight}`} className="flex space-x-4">
+                                <img src={item.image || item.thumbnailUrl} alt={item.name} className="w-20 h-20 object-cover rounded-lg bg-stone-50" />
                                 <div className="flex-1">
                                     <div className="flex justify-between">
                                         <h4 className="font-semibold text-stone-800 text-sm">{item.name}</h4>
@@ -47,21 +47,21 @@ const CartSidebar = ({ isOpen, onClose, items, onRemove, onUpdateQuantity, onPro
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center border border-stone-200 rounded-lg">
                                             <button
-                                                onClick={() => onUpdateQuantity(item.id, -1)}
+                                                onClick={() => onUpdateQuantity(item.id, item.weight, -1)}
                                                 className="px-2 py-1 hover:bg-stone-50"
                                             >
                                                 -
                                             </button>
                                             <span className="px-3 py-1 text-sm">{item.quantity}</span>
                                             <button
-                                                onClick={() => onUpdateQuantity(item.id, 1)}
+                                                onClick={() => onUpdateQuantity(item.id, item.weight, 1)}
                                                 className="px-2 py-1 hover:bg-stone-50"
                                             >
                                                 +
                                             </button>
                                         </div>
                                         <button
-                                            onClick={() => onRemove(item.id)}
+                                            onClick={() => onRemove(item.id, item.weight)}
                                             className="text-stone-400 hover:text-red-500 transition-colors"
                                         >
                                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

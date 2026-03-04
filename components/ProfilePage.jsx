@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const ProfilePage = ({ user, onLogout, onSaveAddress, onUpdateProfile, orders = [], initialTab = 'orders' }) => {
+const ProfilePage = ({ user, onLogout, onSaveAddress, onUpdateProfile, orders = [], ordersLoading = false, ordersError = null, initialTab = 'orders', onRefreshOrders }) => {
     const [activeTab, setActiveTab] = useState(initialTab);
 
     useEffect(() => {
@@ -23,12 +23,12 @@ const ProfilePage = ({ user, onLogout, onSaveAddress, onUpdateProfile, orders = 
     });
 
     const [profileForm, setProfileForm] = useState({
-        firstName: user.name.split(' ')[0] || '',
-        lastName: user.name.split(' ').slice(1).join(' ') || '',
+        firstName: user.firstName || user.name.split(' ')[0] || '',
+        lastName: user.lastName || user.name.split(' ').slice(1).join(' ') || '',
         email: user.email || '',
-        mobile: user.phone || user.mobile || '+917075721229', // Fallback for demo
+        mobile: user.phone || '',
         dob: user.dob || '',
-        gender: user.gender || 'Male'
+        gender: user.gender || ''
     });
 
     const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -65,11 +65,9 @@ const ProfilePage = ({ user, onLogout, onSaveAddress, onUpdateProfile, orders = 
     const handleProfileSubmit = (e) => {
         e.preventDefault();
         onUpdateProfile({
+            ...profileForm,
             name: `${profileForm.firstName} ${profileForm.lastName}`.trim(),
-            email: profileForm.email,
-            phone: profileForm.mobile,
-            dob: profileForm.dob,
-            gender: profileForm.gender
+            phone: profileForm.mobile
         });
         setIsEditingProfile(false);
         alert("Profile updated successfully!");
@@ -78,85 +76,211 @@ const ProfilePage = ({ user, onLogout, onSaveAddress, onUpdateProfile, orders = 
     const renderContent = () => {
         switch (activeTab) {
             case 'orders':
+                // ── Tracking helpers ──────────────────────────────────────────
+                const TRACKING_STEPS = [
+                    'Order Placed',
+                    'Confirmed',
+                    'Shipped',
+                    'Out for Delivery',
+                    'Delivered',
+                ];
+
+                const getStepIndex = (status = '') => {
+                    const s = status.toLowerCase().trim();
+
+                    // ── Cancelled / Failed ───────────────────────────
+                    if (['cancelled', 'canceled', 'rejected', 'failed', 'returned'].includes(s)) return -1;
+
+                    // ── Delivered / Completed ────────────────────────
+                    if (['delivered', 'completed', 'done'].includes(s)) return 4;
+
+                    // ── Out for Delivery ─────────────────────────────
+                    if (['out for delivery', 'out_for_delivery', 'out-for-delivery',
+                        'on the way', 'last mile'].includes(s)) return 3;
+
+                    // ── Shipped / In Transit / Dispatched ────────────
+                    if (['shipped', 'dispatched', 'in transit', 'in_transit',
+                        'intransit', 'packed', 'ready to ship', 'ready for pickup'].includes(s)) return 2;
+
+                    // ── Confirmed / Accepted / Paid ──────────────────
+                    // 'Accepted' is the real status set by the Omni dashboard on acceptance
+                    if (['confirmed', 'accepted', 'approved', 'paid', 'captured',
+                        'payment confirmed', 'processing'].includes(s)) return 1;
+
+                    // ── Pending / default = Order Placed ─────────────
+                    return 0;
+                };
+
+                const statusBadgeClass = (status = '') => {
+                    const s = status.toLowerCase().trim();
+
+                    if (['delivered', 'completed', 'done', 'paid', 'captured', 'payment confirmed'].includes(s))
+                        return 'bg-green-50 border-green-200 text-green-700';
+
+                    if (['shipped', 'dispatched', 'in transit', 'in_transit', 'intransit',
+                        'packed', 'ready to ship'].includes(s))
+                        return 'bg-blue-50 border-blue-200 text-blue-700';
+
+                    if (['out for delivery', 'out_for_delivery', 'out-for-delivery',
+                        'on the way'].includes(s))
+                        return 'bg-purple-50 border-purple-200 text-purple-700';
+
+                    if (['confirmed', 'accepted', 'approved', 'processing'].includes(s))
+                        return 'bg-teal-50 border-teal-200 text-teal-700';
+
+                    if (['cancelled', 'canceled', 'rejected', 'failed', 'returned'].includes(s))
+                        return 'bg-red-50 border-red-200 text-red-700';
+
+                    return 'bg-amber-50 border-amber-200 text-amber-700'; // pending / default
+                };
+
                 return (
                     <div className="space-y-6">
                         <div className="flex justify-between items-center mb-2">
                             <h2 className="text-xl font-serif font-bold text-stone-900">Your Orders</h2>
-                            <span className="text-xs font-bold text-stone-500 uppercase tracking-widest bg-stone-100 px-3 py-1 rounded-full border border-stone-200">
-                                {orders.length} Orders
-                            </span>
+                            <div className="flex items-center gap-3">
+                                <span className="text-xs font-bold text-stone-500 uppercase tracking-widest bg-stone-100 px-3 py-1 rounded-full border border-stone-200">
+                                    {orders.length} Orders
+                                </span>
+                                {onRefreshOrders && (
+                                    <button
+                                        onClick={onRefreshOrders}
+                                        disabled={ordersLoading}
+                                        title="Refresh order status from dashboard"
+                                        className={`flex items-center gap-1.5 px-3 py-1 border rounded-full text-xs font-bold uppercase tracking-widest transition-all ${ordersLoading
+                                            ? 'bg-stone-100 border-stone-200 text-stone-400 cursor-not-allowed'
+                                            : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                                            }`}
+                                    >
+                                        <svg
+                                            xmlns="http://www.w3.org/2000/svg"
+                                            className={`h-3.5 w-3.5 ${ordersLoading ? 'animate-spin' : ''}`}
+                                            fill="none"
+                                            viewBox="0 0 24 24"
+                                            stroke="currentColor"
+                                        >
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                        </svg>
+                                        {ordersLoading ? 'Refreshing...' : 'Refresh'}
+                                    </button>
+                                )}
+                            </div>
                         </div>
 
                         {orders.length > 0 ? (
-                            <div className="space-y-4">
-                                {orders.map((order, idx) => (
-                                    <div key={order.id || idx} className="bg-white rounded-2xl border border-stone-100 shadow-sm overflow-hidden hover:border-amber-200 transition-colors group">
-                                        <div className="bg-stone-50 px-6 py-4 border-b border-stone-100 flex flex-wrap justify-between items-center gap-4">
-                                            <div className="flex space-x-8">
-                                                <div>
-                                                    <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mb-1">Order Date</p>
-                                                    <p className="text-sm font-bold text-stone-900">
-                                                        {order.orderDate ? new Date(order.orderDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Recent'}
-                                                    </p>
+                            <div className="space-y-6">
+                                {orders.map((order, idx) => {
+                                    const stepIdx = getStepIndex(order.status);
+                                    const isCancelled = order.status?.toLowerCase() === 'cancelled';
+
+                                    return (
+                                        <div key={order._id || order.id || idx} className="bg-white rounded-2xl border border-stone-100 shadow-sm overflow-hidden hover:border-amber-200 transition-colors group">
+                                            {/* Order Header */}
+                                            <div className="bg-stone-50 px-6 py-4 border-b border-stone-100 flex flex-wrap justify-between items-center gap-4">
+                                                <div className="flex flex-wrap gap-6">
+                                                    <div>
+                                                        <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mb-1">Order Date</p>
+                                                        <p className="text-sm font-bold text-stone-900">
+                                                            {order.createdAt ? new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Recent'}
+                                                        </p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mb-1">Total Amount</p>
+                                                        <p className="text-sm font-bold text-stone-900">₹{order.totalAmount}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mb-1">Payment</p>
+                                                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border ${(order.paymentMethod || '').toUpperCase() === 'COD'
+                                                            ? 'bg-stone-50 border-stone-200 text-stone-600'
+                                                            : 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                                                            }`}>
+                                                            {(order.paymentMethod || 'COD').toUpperCase()}
+                                                        </span>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mb-1">Status</p>
+                                                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border ${statusBadgeClass(order.status)}`}>
+                                                            {order.status || 'Pending'}
+                                                        </span>
+                                                    </div>
                                                 </div>
                                                 <div>
-                                                    <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mb-1">Total Amount</p>
-                                                    <p className="text-sm font-bold text-stone-900">₹{order.totalAmount}</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mb-1">Status</p>
-                                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border ${order.status === 'Paid' || order.status === 'Delivered'
-                                                        ? 'bg-green-50 border-green-200 text-green-700'
-                                                        : 'bg-amber-50 border-amber-200 text-amber-700'
-                                                        }`}>
-                                                        {order.status || 'Processing'}
-                                                    </span>
+                                                    <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mb-1">Order #</p>
+                                                    <p className="text-xs font-mono font-bold text-stone-600">{order._id || order.id || 'N/A'}</p>
                                                 </div>
                                             </div>
-                                            <div>
-                                                <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mb-1">Order #</p>
-                                                <p className="text-xs font-mono font-bold text-stone-600">{order.id || 'N/A'}</p>
+
+                                            <div className="p-6">
+                                                {/* Tracking Timeline */}
+                                                {!isCancelled ? (
+                                                    <div className="mb-6">
+                                                        <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-4">Tracking Status</p>
+                                                        <div className="relative flex items-center justify-between">
+                                                            {/* connector line behind steps */}
+                                                            <div className="absolute top-4 left-0 right-0 h-0.5 bg-stone-200 z-0" />
+                                                            <div
+                                                                className="absolute top-4 left-0 h-0.5 bg-amber-500 z-0 transition-all duration-700"
+                                                                style={{ width: stepIdx >= 0 ? `${(stepIdx / (TRACKING_STEPS.length - 1)) * 100}%` : '0%' }}
+                                                            />
+                                                            {TRACKING_STEPS.map((step, sIdx) => {
+                                                                const done = sIdx <= stepIdx;
+                                                                const active = sIdx === stepIdx;
+                                                                return (
+                                                                    <div key={step} className="relative z-10 flex flex-col items-center" style={{ minWidth: '60px' }}>
+                                                                        <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all ${done
+                                                                            ? 'bg-amber-500 border-amber-500 shadow-md shadow-amber-200'
+                                                                            : 'bg-white border-stone-200'
+                                                                            } ${active ? 'ring-2 ring-amber-300 ring-offset-1' : ''}`}>
+                                                                            {done ? (
+                                                                                <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                                                                </svg>
+                                                                            ) : (
+                                                                                <span className="w-2 h-2 rounded-full bg-stone-300" />
+                                                                            )}
+                                                                        </div>
+                                                                        <p className={`text-[9px] text-center mt-2 font-bold leading-tight max-w-[54px] ${active ? 'text-amber-700' : done ? 'text-stone-700' : 'text-stone-300'
+                                                                            }`}>{step}</p>
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div className="mb-6 flex items-center gap-2 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+                                                        <svg className="h-5 w-5 text-red-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                                        </svg>
+                                                        <p className="text-sm font-bold text-red-600">This order has been cancelled.</p>
+                                                    </div>
+                                                )}
+
+                                                {/* Products */}
+                                                <div className="space-y-4 pt-4 border-t border-stone-100">
+                                                    {(order.products || order.items || []).map((item, pIdx) => (
+                                                        <div key={pIdx} className="flex items-center justify-between">
+                                                            <div className="flex items-center space-x-4">
+                                                                <div className="w-12 h-12 bg-stone-100 rounded-xl flex items-center justify-center text-amber-700 text-xs font-bold">
+                                                                    {item.quantity}x
+                                                                </div>
+                                                                <div>
+                                                                    <p className="text-sm font-bold text-stone-900">{item.name}</p>
+                                                                    <p className="text-xs text-stone-500">Unit Price: ₹{item.price}</p>
+                                                                </div>
+                                                            </div>
+                                                            <p className="text-sm font-bold text-stone-900">₹{item.price * item.quantity}</p>
+                                                        </div>
+                                                    ))}
+                                                </div>
+
+                                                <div className="mt-6 pt-4 border-t border-stone-100 flex justify-end space-x-4">
+                                                    <button className="text-xs font-bold text-amber-700 uppercase tracking-widest hover:text-amber-800 transition-colors">Download Invoice</button>
+                                                    <button className="text-xs font-bold text-stone-500 uppercase tracking-widest hover:text-stone-900 transition-colors">View Details</button>
+                                                </div>
                                             </div>
                                         </div>
-                                        <div className="p-6">
-                                            <div className="space-y-4">
-                                                {order.products?.map((item, pIdx) => (
-                                                    <div key={pIdx} className="flex items-center justify-between">
-                                                        <div className="flex items-center space-x-4">
-                                                            <div className="w-12 h-12 bg-stone-100 rounded-xl flex items-center justify-center text-amber-700 text-xs font-bold">
-                                                                {item.quantity}x
-                                                            </div>
-                                                            <div>
-                                                                <p className="text-sm font-bold text-stone-900">{item.name}</p>
-                                                                <p className="text-xs text-stone-500">Unit Price: ₹{item.price}</p>
-                                                            </div>
-                                                        </div>
-                                                        <p className="text-sm font-bold text-stone-900">₹{item.price * item.quantity}</p>
-                                                    </div>
-                                                ))}
-                                                {/* Compatibility with old schema (items vs products) */}
-                                                {order.items?.map((item, pIdx) => (
-                                                    <div key={pIdx} className="flex items-center justify-between">
-                                                        <div className="flex items-center space-x-4">
-                                                            <div className="w-12 h-12 bg-stone-100 rounded-xl flex items-center justify-center text-amber-700 text-xs font-bold">
-                                                                {item.quantity}x
-                                                            </div>
-                                                            <div>
-                                                                <p className="text-sm font-bold text-stone-900">{item.name}</p>
-                                                                <p className="text-xs text-stone-500">Unit Price: ₹{item.price}</p>
-                                                            </div>
-                                                        </div>
-                                                        <p className="text-sm font-bold text-stone-900">₹{item.price * item.quantity}</p>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                            <div className="mt-6 pt-6 border-t border-stone-100 flex justify-end space-x-4">
-                                                <button className="text-xs font-bold text-amber-700 uppercase tracking-widest hover:text-amber-800 transition-colors">Download Invoice</button>
-                                                <button className="text-xs font-bold text-stone-500 uppercase tracking-widest hover:text-stone-900 transition-colors">View Details</button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         ) : (
                             <div className="text-center py-20 bg-stone-50 rounded-2xl border border-dashed border-stone-200">
@@ -534,7 +658,6 @@ const ProfilePage = ({ user, onLogout, onSaveAddress, onUpdateProfile, orders = 
 
     const menuItems = [
         { id: 'orders', label: 'My Orders', icon: 'M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z' },
-        { id: 'payments', label: 'My Payments', icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
         { id: 'addresses', label: 'My Addresses', icon: 'M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z M15 11a3 3 0 11-6 0 3 3 0 016 0z' },
         { id: 'profile', label: 'My Profile', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z' },
     ];

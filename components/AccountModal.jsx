@@ -9,6 +9,43 @@ const AccountModal = ({ isOpen, onClose, user, onLogin, onLogout, onSaveAddress 
     const [password, setPassword] = useState('');
     const [name, setName] = useState('');
 
+    const [isAddingAddress, setIsAddingAddress] = useState(false);
+    const [addressForm, setAddressForm] = useState({
+        firstName: '',
+        lastName: '',
+        mobile: '',
+        pinCode: '',
+        state: '',
+        city: '',
+        area: '',
+        flat: '',
+        landmark: '',
+        addressType: 'Home'
+    });
+
+    const handleFormChange = (e) => {
+        const { name, value } = e.target;
+        setAddressForm(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleAddressSubmit = (e) => {
+        e.preventDefault();
+        onSaveAddress(addressForm);
+        setAddressForm({
+            firstName: '',
+            lastName: '',
+            mobile: '',
+            pinCode: '',
+            state: '',
+            city: '',
+            area: '',
+            flat: '',
+            landmark: '',
+            addressType: 'Home'
+        });
+        setIsAddingAddress(false);
+    };
+
     const handleSubmit = (e) => {
         e.preventDefault();
         onLogin({ name: name || 'User', email });

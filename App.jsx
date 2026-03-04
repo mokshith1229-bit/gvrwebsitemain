@@ -1,101 +1,99 @@
 
 import React, { useState, useEffect } from 'react';
+import { useSelector, useDispatch } from 'react-redux';
+
+// Components
 import Navbar from './components/Navbar';
 import ProductCard from './components/ProductCard';
 import CartSidebar from './components/CartSidebar';
-
 import AccountModal from './components/AccountModal';
 import ProductDetailPage from './components/ProductDetailPage';
 import CheckoutPage from './components/CheckoutPage';
 import PaymentPage from './components/PaymentPage';
 import ProfilePage from './components/ProfilePage';
-import { PRODUCTS } from './constants';
+
+// Redux: product actions & selectors
+import { fetchProducts, selectProductsLoading, selectProductsError, selectFilteredProducts } from './store/slices/productSlice';
+
+// Redux: cart actions & selectors
+import { addToCart, removeFromCart, updateQuantity, clearCart, selectCartItems, selectCartCount } from './store/slices/cartSlice';
+
+// Redux: user actions & selectors
+import { loginUser, logoutUser, updateUserAddresses, updateUserProfile, saveAddress, updateProfile, selectUser } from './store/slices/userSlice';
+
+// Redux: order actions & selectors
+import {
+    fetchUserOrders, setPendingOrder, clearPendingOrder, prependOrder,
+    selectUserOrders, selectOrdersLoading, selectOrdersError, selectPendingOrder
+} from './store/slices/orderSlice';
+
+// Central API config — change BASE_URL in api.js to switch environments
+import { ORDERS_URL } from './api';
 
 const App = () => {
-    const [cart, setCart] = useState([]);
-    const [isCartOpen, setIsCartOpen] = useState(false);
+    const dispatch = useDispatch();
 
+    // ── UI-only state (not global, kept as local useState) ──────
+    const [isCartOpen, setIsCartOpen] = useState(false);
     const [isAccountOpen, setIsAccountOpen] = useState(false);
-    const [user, setUser] = useState(null); // { name: 'User', email: '...', addresses: [] }
     const [searchQuery, setSearchQuery] = useState('');
     const [activeCategory, setActiveCategory] = useState('All');
     const [view, setView] = useState('home');
     const [profileTab, setProfileTab] = useState('orders');
     const [selectedProductId, setSelectedProductId] = useState(null);
     const [viewPolicy, setViewPolicy] = useState(null); // 'shipping', 'refund', 'terms'
-    const [adminProducts, setAdminProducts] = useState([]);
+    const [orderSuccessMsg, setOrderSuccessMsg] = useState(''); // success toast after order
 
+    // ── Redux Selectors ─────────────────────────────────────────
+    // Read global state from the Redux store
+    const productsLoading = useSelector(selectProductsLoading);
+    const productsError = useSelector(selectProductsError);
+    const filteredProducts = useSelector(selectFilteredProducts(activeCategory, searchQuery));
+    const cart = useSelector(selectCartItems);
+    const cartCount = useSelector(selectCartCount);
+    const user = useSelector(selectUser);
+    const userOrders = useSelector(selectUserOrders);
+    const ordersLoading = useSelector(selectOrdersLoading);
+    const ordersError = useSelector(selectOrdersError);
+    const pendingOrder = useSelector(selectPendingOrder);
+
+    // Derive selectedProduct from Redux store
+    const allProducts = useSelector((state) => state.products.items);
+    const selectedProduct = allProducts.find(
+        (p) => p.id === selectedProductId || p._id === selectedProductId
+    );
+
+    // ── Fetch Products on Mount ─────────────────────────────────
     useEffect(() => {
-        const fetchProducts = async () => {
-            try {
-                const response = await fetch('http://localhost:5000/products');
-                const data = await response.json();
-                if (Array.isArray(data)) {
-                    // Normalize image URLs: If relative, prepend backend URL
-                    const processedData = data.map(product => {
-                        let imageUrl = product.image;
-                        if (imageUrl && !imageUrl.startsWith('http')) {
-                            // Remove leading slash if present to avoid double slashes if we were just concatting, 
-                            // but safer to just handle the join clean.
-                            // Actually, let's just check if it starts with http.
-                            // If not, assume it needs the localhost:5000 prefix.
-                            // Also handling if the path already has a leading / or not.
-                            const cleanPath = imageUrl.startsWith('/') ? imageUrl : `/${imageUrl}`;
-                            imageUrl = `http://localhost:5000${cleanPath}`;
-                        }
-                        return { ...product, image: imageUrl };
-                    });
-                    setAdminProducts(processedData);
-                }
-            } catch (error) {
-                console.error("Failed to fetch products:", error);
-            }
-        };
+        // Dispatch the async thunk to load products from the backend
+        dispatch(fetchProducts());
 
-        fetchProducts();
-    }, []);
+        // Note: Login persistence is handled automatically in userSlice.js
+        // via localStorage initialization in the initialState.
+    }, [dispatch]);
 
-    const selectedProduct = PRODUCTS.find(p => p.id === selectedProductId) ||
-        adminProducts.find(p => p.id === selectedProductId || p._id === selectedProductId);
+    // ── Fetch User Orders when Profile is Viewed ────────────────
+    useEffect(() => {
+        if (user && view === 'profile') {
+            dispatch(fetchUserOrders(user));
+        }
+    }, [user, view, dispatch]);
 
-    const filteredProducts = PRODUCTS.filter(p => {
-        const matchesCategory = activeCategory === 'All' || p.category === activeCategory;
-        const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            p.description.toLowerCase().includes(searchQuery.toLowerCase());
-        return matchesCategory && matchesSearch;
-    });
-
-    const addToCart = (product, quantity = 1) => {
-        setCart(prev => {
-            const existing = prev.find(item => item.id === product.id);
-            if (existing) {
-                return prev.map(item =>
-                    item.id === product.id ? { ...item, quantity: item.quantity + quantity } : item
-                );
-            }
-            return [...prev, { ...product, quantity }];
-        });
-        // For standard "Add to Cart", we show the sidebar
+    // ── Cart Handlers ───────────────────────────────────────────
+    const handleAddToCart = (product, quantity = 1) => {
+        dispatch(addToCart({ product, quantity }));
         setIsCartOpen(true);
     };
 
-    const removeFromCart = (id) => {
-        setCart(prev => prev.filter(item => item.id !== id));
+    const handleRemoveFromCart = (id, weight) => {
+        dispatch(removeFromCart({ id, weight }));
     };
 
-    const updateQuantity = (id, delta) => {
-        setCart(prev => prev.map(item => {
-            if (item.id === id) {
-                const newQty = Math.max(1, item.quantity + delta);
-                return { ...item, quantity: newQty };
-            }
-            return item;
-        }));
+    const handleUpdateQuantity = (id, weight, delta) => {
+        dispatch(updateQuantity({ id, weight, delta }));
     };
 
-    const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
-
-    // View Navigation Handlers
+    // ── View Navigation Handlers ────────────────────────────────
     const handleViewDetails = (id) => {
         setSelectedProductId(id);
         setView('detail');
@@ -107,7 +105,7 @@ const App = () => {
         setSelectedProductId(null);
         setViewPolicy(null);
         if (newView === 'profile') {
-            setProfileTab('orders'); // Default back to orders when clicking Nav "My Account"
+            setProfileTab('orders');
         }
         window.scrollTo(0, 0);
     };
@@ -125,88 +123,64 @@ const App = () => {
     };
 
     const handleBuyNow = (product, quantity) => {
-        // Add to cart without opening sidebar
-        setCart(prev => {
-            const existing = prev.find(item => item.id === product.id);
-            if (existing) {
-                return prev.map(item =>
-                    item.id === product.id ? { ...item, quantity: item.quantity + quantity } : item
-                );
-            }
-            return [...prev, { ...product, quantity }];
-        });
+        // Add to cart silently (no sidebar), then go directly to checkout
+        dispatch(addToCart({ product, quantity }));
         setIsCartOpen(false);
         setView('checkout');
         window.scrollTo(0, 0);
     };
 
-    const [pendingOrder, setPendingOrder] = useState(null);
-    const [userOrders, setUserOrders] = useState([]);
-
-    const fetchUserOrders = async (currentUser) => {
-        if (!currentUser) return;
-        try {
-            const response = await fetch('http://localhost:5000/orders');
-            if (response.ok) {
-                const allOrders = await response.json();
-                // Filter orders by customer name or email. 
-                // Since our mock login doesn't have true auth, we'll try to match by name or email if available in order.
-                // Looking at backend/orders.json, it uses customerName.
-                const filtered = allOrders.filter(order =>
-                    order.customerName?.toLowerCase() === currentUser.name?.toLowerCase() ||
-                    order.customerEmail === currentUser.email
-                );
-                setUserOrders(filtered.reverse()); // Show newest first
-            }
-        } catch (error) {
-            console.error("Failed to fetch orders:", error);
-        }
-    };
-
-    useEffect(() => {
-        if (user && view === 'profile') {
-            fetchUserOrders(user);
-        }
-    }, [user, view]);
-
+    // ── Order Handlers ──────────────────────────────────────────
     const handleCheckoutSuccess = (orderData, isOnlinePayment) => {
-        if (isOnlinePayment) {
-            setPendingOrder(orderData);
-            setView('payment');
-            window.scrollTo(0, 0);
-        } else {
-            // COD Success
-            alert("Order placed successfully! Thank you for shopping with GVR Cashew.");
-            setCart([]);
-            setView('home');
-        }
+        const msg = isOnlinePayment
+            ? '🎉 Payment successful! Your order has been placed.'
+            : '✅ Order placed successfully! Thank you for shopping with GVR Cashew.';
+
+        // Optimistically add the order so it shows up instantly
+        dispatch(prependOrder(orderData));
+        dispatch(clearCart());
+
+        // Show toast
+        setOrderSuccessMsg(msg);
+        setTimeout(() => setOrderSuccessMsg(''), 5000);
+
+        // Redirect to My Orders
+        setProfileTab('orders');
+        setView('profile');
+        window.scrollTo(0, 0);
+
+        // Immediately fetch from backend to get the real server-confirmed order
+        // (includes _id, server timestamps, etc.)
+        if (user) dispatch(fetchUserOrders(user));
     };
 
     const handlePaymentComplete = async () => {
         if (!pendingOrder) return;
 
-        // In a real app, verify payment here. For now, just save order.
         try {
             const finalOrder = {
                 ...pendingOrder,
                 status: 'Paid',
                 paymentMethod: 'online',
-                customerEmail: user?.email // Add email for tracking
+                customerEmail: user?.email,
             };
 
-            const response = await fetch('http://localhost:5000/orders', {
+            const response = await fetch(ORDERS_URL, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(finalOrder),
             });
 
             if (response.ok) {
-                alert("Payment Successful! Order placed.");
-                setCart([]);
-                setPendingOrder(null);
-                setView('home');
+                dispatch(prependOrder(finalOrder));
+                dispatch(clearCart());
+                dispatch(clearPendingOrder());
+                setOrderSuccessMsg('🎉 Payment successful! Your order has been placed.');
+                setTimeout(() => setOrderSuccessMsg(''), 5000);
+                setProfileTab('orders');
+                setView('profile');
+                window.scrollTo(0, 0);
+                if (user) dispatch(fetchUserOrders(user));
             } else {
                 alert("Failed to save order. Please contact support.");
             }
@@ -216,13 +190,14 @@ const App = () => {
         }
     };
 
+    // ── User Handlers ───────────────────────────────────────────
     const handleLogin = (userData) => {
-        setUser({ ...userData, addresses: [] });
-        setIsAccountOpen(false); // Close Modal on success
+        dispatch(loginUser(userData));
+        setIsAccountOpen(false);
     };
 
     const handleLogout = () => {
-        setUser(null);
+        dispatch(logoutUser());
         setView('home');
     };
 
@@ -243,23 +218,30 @@ const App = () => {
     };
 
     const handleSaveAddress = (address) => {
-        if (user) {
-            setUser({ ...user, addresses: [...user.addresses, address] });
+        if (user?._id) {
+            const newAddresses = [...(user.addresses || []), address];
+            dispatch(updateUserAddresses({ userId: user._id, addresses: newAddresses }));
+        } else {
+            // Fallback for mock users/unsaved states
+            dispatch(saveAddress(address));
         }
     };
 
     const handleUpdateProfile = (updatedData) => {
-        if (user) {
-            setUser({ ...user, ...updatedData });
+        if (user?._id) {
+            dispatch(updateUserProfile({ userId: user._id, updatedData }));
+        } else {
+            // Fallback for mock users/unsaved states
+            dispatch(updateProfile(updatedData));
         }
     };
 
+    // ── Render ──────────────────────────────────────────────────
     return (
         <div className="min-h-screen bg-stone-50 flex flex-col">
             <Navbar
                 cartCount={cartCount}
                 onCartClick={() => setIsCartOpen(true)}
-
                 onAccountClick={handleAccountClick}
                 onNavigate={handleNavigate}
                 onSearch={setSearchQuery}
@@ -267,6 +249,27 @@ const App = () => {
             />
 
             <main className="flex-1">
+                {/* ── Order Success Toast ────────────────────────────── */}
+                {orderSuccessMsg && (
+                    <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[9999] animate-in slide-in-from-top-4 duration-500">
+                        <div className="flex items-center gap-3 bg-white border border-green-200 shadow-2xl shadow-green-900/10 rounded-2xl px-6 py-4 max-w-sm">
+                            <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
+                                <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                                </svg>
+                            </div>
+                            <p className="text-sm font-bold text-stone-900">{orderSuccessMsg}</p>
+                            <button
+                                onClick={() => setOrderSuccessMsg('')}
+                                className="ml-auto text-stone-400 hover:text-stone-600"
+                            >
+                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                )}
                 {view === 'home' && (
                     <>
                         {/* Hero Section */}
@@ -367,25 +370,45 @@ const App = () => {
 
                         {/* Product Grid */}
                         <section className="max-w-7xl mx-auto px-4 py-16">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-                                {filteredProducts.map(product => (
-                                    <ProductCard
-                                        key={product.id}
-                                        product={product}
-                                        onAddToCart={(p) => addToCart(p, 1)}
-                                        onViewDetails={handleViewDetails}
-                                    />
-                                ))}
 
-                                {adminProducts?.length > 0 && adminProducts.map((product, index) => (
-                                    <ProductCard
-                                        key={product.id || product._id || index}
-                                        product={product}
-                                        onAddToCart={(p) => addToCart(p, 1)}
-                                        onViewDetails={handleViewDetails}
-                                    />
-                                ))}
-                            </div>
+                            {/* Loading State */}
+                            {productsLoading && (
+                                <div className="text-center py-20">
+                                    <div className="inline-block w-10 h-10 border-4 border-amber-700 border-t-transparent rounded-full animate-spin mb-4"></div>
+                                    <p className="text-stone-500 text-sm">Loading products...</p>
+                                </div>
+                            )}
+
+                            {/* Error State */}
+                            {!productsLoading && productsError && (
+                                <div className="text-center py-20">
+                                    <p className="text-red-500 font-medium">{productsError}</p>
+                                </div>
+                            )}
+
+                            {/* No Products State */}
+                            {!productsLoading && !productsError && filteredProducts.length === 0 && (
+                                <div className="text-center py-20">
+                                    <span className="text-6xl block mb-4">🥜</span>
+                                    <p className="text-stone-500 text-lg font-medium">No products available</p>
+                                    <p className="text-stone-400 text-sm mt-2">Check back soon or try a different category.</p>
+                                </div>
+                            )}
+
+                            {/* Product Cards from Backend */}
+                            {!productsLoading && !productsError && filteredProducts.length > 0 && (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+                                    {filteredProducts.map((product, index) => (
+                                        <ProductCard
+                                            key={product.id || product._id || index}
+                                            product={product}
+                                            onAddToCart={(p) => handleAddToCart(p, 1)}
+                                            onViewDetails={handleViewDetails}
+                                        />
+                                    ))}
+                                </div>
+                            )}
+
                         </section>
                     </div>
                 )}
@@ -521,7 +544,7 @@ const App = () => {
                 {view === 'detail' && selectedProduct && (
                     <ProductDetailPage
                         product={selectedProduct}
-                        onAddToCart={addToCart}
+                        onAddToCart={handleAddToCart}
                         onBuyNow={handleBuyNow}
                         onBack={() => setView('shop')}
                     />
@@ -551,10 +574,13 @@ const App = () => {
                     <ProfilePage
                         user={user}
                         orders={userOrders}
+                        ordersLoading={ordersLoading}
+                        ordersError={ordersError}
                         onLogout={handleLogout}
                         onSaveAddress={handleSaveAddress}
                         onUpdateProfile={handleUpdateProfile}
                         initialTab={profileTab}
+                        onRefreshOrders={() => dispatch(fetchUserOrders(user))}
                     />
                 )}
             </main>
@@ -602,11 +628,10 @@ const App = () => {
                 isOpen={isCartOpen}
                 onClose={() => setIsCartOpen(false)}
                 items={cart}
-                onRemove={removeFromCart}
-                onUpdateQuantity={updateQuantity}
+                onRemove={handleRemoveFromCart}
+                onUpdateQuantity={handleUpdateQuantity}
                 onProceedToCheckout={handleProceedToCheckout}
             />
-
 
             <AccountModal
                 isOpen={isAccountOpen}
