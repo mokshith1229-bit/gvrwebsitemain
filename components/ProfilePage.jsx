@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const ProfilePage = ({ user, onLogout, onSaveAddress, onUpdateProfile, orders = [], ordersLoading = false, ordersError = null, initialTab = 'orders', onRefreshOrders }) => {
+const ProfilePage = ({ user, onLogout, onSaveAddress, onDeleteAddress, onUpdateProfile, orders = [], ordersLoading = false, ordersError = null, initialTab = 'orders', onRefreshOrders }) => {
     const [activeTab, setActiveTab] = useState(initialTab);
 
     useEffect(() => {
@@ -9,6 +9,7 @@ const ProfilePage = ({ user, onLogout, onSaveAddress, onUpdateProfile, orders = 
         }
     }, [initialTab]);
     const [isAddingAddress, setIsAddingAddress] = useState(false);
+    const [editingIndex, setEditingIndex] = useState(-1);
     const [addressForm, setAddressForm] = useState({
         firstName: '',
         lastName: '',
@@ -38,9 +39,16 @@ const ProfilePage = ({ user, onLogout, onSaveAddress, onUpdateProfile, orders = 
         setAddressForm(prev => ({ ...prev, [name]: value }));
     };
 
+    const handleEditAddress = (index) => {
+        const addr = user.addresses[index];
+        setAddressForm({ ...addr });
+        setEditingIndex(index);
+        setIsAddingAddress(true);
+    };
+
     const handleAddressSubmit = (e) => {
         e.preventDefault();
-        onSaveAddress(addressForm);
+        onSaveAddress(addressForm, editingIndex);
         setAddressForm({
             firstName: '',
             lastName: '',
@@ -54,6 +62,7 @@ const ProfilePage = ({ user, onLogout, onSaveAddress, onUpdateProfile, orders = 
             addressType: 'Home'
         });
         setIsAddingAddress(false);
+        setEditingIndex(-1);
     };
 
     const handleProfileChange = (e) => {
@@ -331,9 +340,23 @@ const ProfilePage = ({ user, onLogout, onSaveAddress, onUpdateProfile, orders = 
                                                     </p>
                                                 </div>
                                                 <div className="flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <button className="text-stone-400 hover:text-amber-700 text-xs font-bold uppercase">Edit</button>
+                                                    <button
+                                                        onClick={() => handleEditAddress(idx)}
+                                                        className="text-stone-400 hover:text-amber-700 text-xs font-bold uppercase transition-colors"
+                                                    >
+                                                        Edit
+                                                    </button>
                                                     <span className="text-stone-300">|</span>
-                                                    <button className="text-stone-400 hover:text-red-600 text-xs font-bold uppercase">Delete</button>
+                                                    <button
+                                                        onClick={() => {
+                                                            if (window.confirm("Are you sure you want to delete this address?")) {
+                                                                onDeleteAddress(idx);
+                                                            }
+                                                        }}
+                                                        className="text-stone-400 hover:text-red-600 text-xs font-bold uppercase transition-colors"
+                                                    >
+                                                        Delete
+                                                    </button>
                                                 </div>
                                             </div>
                                         ))}
@@ -347,7 +370,9 @@ const ProfilePage = ({ user, onLogout, onSaveAddress, onUpdateProfile, orders = 
                             </div>
                         ) : (
                             <div className="bg-white p-8 rounded-2xl border border-stone-200 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500">
-                                <h3 className="text-lg font-serif font-bold text-stone-900 mb-6">Add New Address</h3>
+                                <h3 className="text-lg font-serif font-bold text-stone-900 mb-6">
+                                    {editingIndex > -1 ? 'Edit Address' : 'Add New Address'}
+                                </h3>
                                 <form onSubmit={handleAddressSubmit} className="space-y-6">
                                     <div className="grid md:grid-cols-2 gap-6">
                                         {/* Country */}
@@ -495,7 +520,10 @@ const ProfilePage = ({ user, onLogout, onSaveAddress, onUpdateProfile, orders = 
                                     <div className="pt-8 mt-4 border-t border-stone-100 flex items-center justify-end space-x-4">
                                         <button
                                             type="button"
-                                            onClick={() => setIsAddingAddress(false)}
+                                            onClick={() => {
+                                                setIsAddingAddress(false);
+                                                setEditingIndex(-1);
+                                            }}
                                             className="px-8 py-3 rounded-xl border border-stone-200 text-stone-600 font-bold hover:bg-stone-50 transition-colors uppercase tracking-widest text-xs"
                                         >
                                             Cancel

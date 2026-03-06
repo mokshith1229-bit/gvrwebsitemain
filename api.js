@@ -20,6 +20,9 @@ export const USERS_URL = `${BASE_URL}/users`;
 /** POST /orders — create a new order */
 export const ORDERS_URL = `${BASE_URL}/orders`;
 
+/** GET/POST/PUT/DELETE /api/address — manage user addresses */
+export const ADDRESS_URL = `${BASE_URL}/api/address`;
+
 /** POST /payment/create-payment — initiate Razorpay payment order */
 export const CREATE_PAYMENT_URL = `${BASE_URL}/payment/create-payment`;
 

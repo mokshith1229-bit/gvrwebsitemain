@@ -29,6 +29,8 @@ export const fetchProducts = createAsyncThunk(
             return data.map((product) => ({
                 ...product,
                 id: product._id || product.id,
+                // Normalize weight to a string with 'g' suffix (e.g., 250 -> '250g')
+                weight: product.weight ? (String(product.weight).endsWith('g') ? product.weight : `${product.weight}g`) : '250g',
                 // Primary image used by ProductCard
                 thumbnailUrl: getImageUrl(product.thumbnail) || null,
                 // Full gallery images used by ProductDetailPage

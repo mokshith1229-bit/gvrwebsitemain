@@ -1,5 +1,5 @@
 
-export type Category = 'Plain' | 'Roasted' | 'Flavored' | 'Gift Packs' | 'Bulk';
+export type Category = 'Plain' | 'Roasted' | 'Flavored' | 'Gift Packs';
 
 export interface Product {
   id: string;

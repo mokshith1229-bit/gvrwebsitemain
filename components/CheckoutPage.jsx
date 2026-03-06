@@ -106,9 +106,11 @@ const CheckoutPage = ({ items, onBack, onSuccess, user, onOpenLogin, onOpenAddre
             });
 
             const data = await response.json();
-            if (response.ok) {
+            if (response.ok && data.success) {
                 setCouriers(data.couriers || []);
-                // If previously selected courier is no longer available or cost changed, reset
+                if (data.couriers.length === 0) {
+                    setShippingError(data.message || 'No couriers available for this route');
+                }
                 setSelectedCourier(null);
             } else {
                 setShippingError(data.message || 'Could not calculate shipping');
